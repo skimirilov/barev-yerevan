@@ -108,61 +108,6 @@
     }
     map.on('moveend zoomend',redrawLabels);fit();redrawLabels();localizeScale();setTimeout(()=>{ready=true;},300);
     new ResizeObserver(()=>{map.invalidateSize();redrawLabels();}).observe($('map'));
-
-    // Host-page integration. Folder structure and relative asset URLs stay intact.
-    const originalStops=day.stops.map(s=>({...s}));
-    let hostLang='ru';
-    function hostFilter(stage){
-      map.closePopup();
-      const visible=[];
-      markers.forEach((m,i)=>{
-        const stageIndex=['Прошлое','Настоящее','Будущее'].findIndex(x=>originalStops[i].stage.startsWith(x));
-        const show=stage===-1||stageIndex===stage;
-        if(show){if(!map.hasLayer(m))m.addTo(map);visible.push(m.getLatLng());}
-        else if(map.hasLayer(m))map.removeLayer(m);
-        const listItem=$('stops-list').children[i];if(listItem)listItem.hidden=!show;
-      });
-      if(visible.length)map.fitBounds(L.latLngBounds(visible),{padding:[80,100],maxZoom:16,animate:false});
-    }
-    window.addEventListener('message',event=>{
-      if(event.origin!==location.origin||event.source!==parent||event.data?.source!=='barev-parent')return;
-      const msg=event.data;
-      if(msg.type==='filter'&&Number.isInteger(msg.stage)&&msg.stage>=-1&&msg.stage<=2)hostFilter(msg.stage);
-      if(msg.type==='focus'&&Number.isInteger(msg.index)&&markers[msg.index]){
-        if(!map.hasLayer(markers[msg.index]))markers[msg.index].addTo(map);
-        showStop(msg.index,true);
-      }
-      if(msg.type==='configure'&&Array.isArray(msg.stops)&&msg.stops.length===day.stops.length){
-        hostLang=msg.lang==='hy'?'hy':'ru';document.documentElement.lang=hostLang;
-        day.stops.forEach((s,i)=>{
-          const translated=msg.stops[i];for(const key of ['name','description','stage','symbol'])if(typeof translated[key]==='string')s[key]=translated[key];
-          s.shortName=s.name;s.imageAlt=s.name;
-          const span=$('stops-list').children[i]?.querySelector('span');if(span)span.textContent=s.name;
-          const el=markers[i].getElement();if(el){el.setAttribute('title',s.name);el.setAttribute('aria-label',(hostLang==='hy'?'Բացել կանգառը՝ ':'Открыть остановку: ')+s.name);}
-        });
-        const heading=document.querySelector('.day-label>span:last-child');if(heading)heading.textContent=msg.title;
-        document.title=msg.title;
-        $('stops-toggle').querySelector('span').textContent=hostLang==='hy'?'Կանգառներ':'Остановки';
-        $('stops-toggle').setAttribute('aria-label',hostLang==='hy'?'Երթուղու կանգառներ':'Остановки маршрута');
-        document.querySelector('.panel-heading>span').textContent=hostLang==='hy'?'Երթուղու հերթականությամբ':'По порядку маршрута';
-        $('close-list').setAttribute('aria-label',hostLang==='hy'?'Փակել ցանկը':'Закрыть список остановок');
-        $('zoom-in').setAttribute('aria-label',hostLang==='hy'?'Մոտեցնել':'Приблизить');
-        $('zoom-out').setAttribute('aria-label',hostLang==='hy'?'Հեռացնել':'Отдалить');
-        $('fit').setAttribute('aria-label',hostLang==='hy'?'Ամբողջ երթուղին':'Показать весь маршрут');
-        document.querySelectorAll('.map-legend>span').forEach((el,i)=>{const line=el.querySelector('i');el.replaceChildren(line,document.createTextNode(hostLang==='hy'?(i?'Տրանսֆեր':'Ոտքով'):(i?'Трансфер':'Пешком')));});
-        hostFilter(msg.stage);redrawLabels();
-      }
-    });
-    map.on('popupopen',e=>{
-      const index=markers.findIndex(m=>m.getPopup()===e.popup);
-      if(index>=0&&parent!==window)parent.postMessage({source:'barev-map',type:'selected',index},location.origin);
-      if(hostLang==='hy'){
-        const popup=e.popup.getElement();popup.querySelectorAll('.place-navigation button').forEach((b,i)=>b.textContent=i?'Հաջորդը →':'← Նախորդը');
-        popup.querySelector('.leaflet-popup-close-button')?.setAttribute('aria-label','Փակել');
-      }
-    });
-    if(parent!==window)parent.postMessage({source:'barev-map',type:'ready'},location.origin);
-
     $('loading').hidden=true;
   }catch(error){console.error(error);$('loading').hidden=true;$('error').hidden=false;}
 })();

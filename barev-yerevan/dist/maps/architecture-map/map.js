@@ -5,9 +5,9 @@
     const [base, day] = window.MAP_DATA || await Promise.all(['data/base.json', 'data/day-1.json'].map(async url => {
       const response = await fetch(url); if (!response.ok) throw new Error(`${url}: ${response.status}`); return response.json();
     }));
-    const narrow = () => innerWidth <= 600;
+    const narrow = () => $('map').clientWidth <= 600;
     const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const map = L.map('map', {zoomControl:false, minZoom:13, maxZoom:19, zoomSnap:.25, zoomDelta:.75, preferCanvas:true, closePopupOnClick:false, maxBounds:[[40.12,44.40],[40.25,44.61]], maxBoundsViscosity:.8, zoomAnimation:!reduceMotion, fadeAnimation:!reduceMotion});
+    const map = L.map('map', {zoomControl:false, minZoom:10, maxZoom:19, zoomSnap:.25, zoomDelta:.75, preferCanvas:true, closePopupOnClick:false, maxBounds:base.coverage, maxBoundsViscosity:1, zoomAnimation:!reduceMotion, fadeAnimation:!reduceMotion});
     map.setView([40.185,44.505],14);
     map.attributionControl.setPrefix('');
     map.attributionControl.addAttribution('© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>');
@@ -63,7 +63,7 @@
       marker.bindPopup(()=>popupContent(stop,index),{maxWidth:320,minWidth:240,closeButton:true,autoClose:true,closeOnEscapeKey:true,autoPan:false});
       // A click after hover must keep the already opened card visible.
       marker.off('click');
-      marker.on('mouseover',()=>{if(ready&&!moving&&!marker.isPopupOpen()&&matchMedia('(hover: hover)').matches)showStop(index);});
+      // Mouse hover is managed centrally, including after stage filters re-add pins.
       marker.on('click',()=>showStop(index));
       const el=marker.getElement();el.setAttribute('role','button');el.setAttribute('aria-label',`Открыть остановку ${index+1}: ${stop.name}`);
       el.addEventListener('keydown',e=>{if(e.key===' '){e.preventDefault();showStop(index);}});
@@ -71,6 +71,7 @@
       const li=document.createElement('li'),b=document.createElement('button');b.type='button';b.className='stop-link';
       const num=document.createElement('b');num.textContent=index+1;const name=document.createElement('span');name.textContent=stop.name;b.append(num,name);b.onclick=()=>{toggleList(false);showStop(index,true);};li.append(b);$('stops-list').append(li);
     });
+    installMapHoverCards({map,markers,canOpen:()=>ready&&!moving,open:index=>showStop(index)});
     map.on('popupopen',e=>{
       const el=e.popup.getElement(),close=el.querySelector('.leaflet-popup-close-button');close.setAttribute('aria-label','Закрыть карточку места');close.setAttribute('title','Закрыть');
       requestAnimationFrame(()=>{
@@ -84,12 +85,26 @@
     function toggleList(open){$('stops-panel').hidden=!open;$('stops-toggle').setAttribute('aria-expanded',String(open));}
     $('stops-toggle').onclick=()=>toggleList($('stops-panel').hidden);$('close-list').onclick=()=>toggleList(false);
     document.addEventListener('keydown',e=>{if(e.key==='Escape'){map.closePopup();toggleList(false);}});
-    const bounds=L.latLngBounds(day.legs.flatMap(l=>l.coordinates.map(c=>[c[1],c[0]])));
-    function fit(){map.closePopup();map.fitBounds(bounds,{paddingTopLeft:[narrow()?35:90,100],paddingBottomRight:[narrow()?35:100,110],animate:false});}
+    const bounds=L.latLngBounds([...day.legs.flatMap(l=>l.coordinates.map(c=>[c[1],c[0]])),...day.stops.map(s=>[s.lat,s.lon])]);
+    const coverage=L.latLngBounds(base.coverage);
+    let overviewBounds=bounds, overview=true, framing=false;
+    function fitOverview(){
+      const size=map.getSize();if(!size.x||!size.y)return;
+      framing=true;
+      // Keep the viewport inside the downloaded geographic area at any screen size.
+      const minimum=Math.ceil(map.getBoundsZoom(coverage,true)*4)/4;
+      map.setMinZoom(Math.max(10,minimum));map.setMaxBounds(coverage);
+      map.fitBounds(overviewBounds,{paddingTopLeft:[narrow()?35:90,90],paddingBottomRight:[narrow()?60:100,90],maxZoom:16,animate:false});
+      framing=false;overview=true;
+    }
+    function fit(){map.closePopup();fitOverview();}
+    map.on('dragstart',()=>{overview=false;});
+    map.on('zoomstart',()=>{if(!framing)overview=false;});
+    map.on('popupopen',()=>{overview=false;});
     $('fit').onclick=fit;$('zoom-in').onclick=()=>map.zoomIn();$('zoom-out').onclick=()=>map.zoomOut();
     function redrawLabels(){
       const zoom=map.getZoom();
-      for(const [group,threshold] of [[roadGroups.local,14],[roadGroups.minor,16.25]]){if(zoom>=threshold){if(!map.hasLayer(group))map.addLayer(group);}else if(map.hasLayer(group))map.removeLayer(group);}
+      for(const [group,threshold] of [[roadGroups.local,12.5],[roadGroups.minor,16.25]]){if(zoom>=threshold){if(!map.hasLayer(group))map.addLayer(group);}else if(map.hasLayer(group))map.removeLayer(group);}
       labels.clearLayers();
       const occupied=[],size=map.getSize();
       // Reserve space for numbered stops, then place street names without collisions.
@@ -107,7 +122,15 @@
       $('zoom-in').disabled=zoom>=map.getMaxZoom();$('zoom-out').disabled=zoom<=map.getMinZoom();
     }
     map.on('moveend zoomend',redrawLabels);fit();redrawLabels();localizeScale();setTimeout(()=>{ready=true;},300);
-    new ResizeObserver(()=>{map.invalidateSize();redrawLabels();}).observe($('map'));
+    let lastSize='';
+    new ResizeObserver(()=>{
+      const el=$('map'),key=el.clientWidth+'x'+el.clientHeight;
+      if(!el.clientWidth||!el.clientHeight||key===lastSize)return;
+      lastSize=key;map.invalidateSize({pan:false});
+      if(overview)fitOverview();
+      else {framing=true;map.setMinZoom(Math.max(10,Math.ceil(map.getBoundsZoom(coverage,true)*4)/4));map.setMaxBounds(coverage);framing=false;}
+      redrawLabels();
+    }).observe($('map'));
 
     // Host-page integration. Folder structure and relative asset URLs stay intact.
     const originalStops=day.stops.map(s=>({...s}));
@@ -122,7 +145,7 @@
         else if(map.hasLayer(m))map.removeLayer(m);
         const listItem=$('stops-list').children[i];if(listItem)listItem.hidden=!show;
       });
-      if(visible.length)map.fitBounds(L.latLngBounds(visible),{padding:[80,100],maxZoom:16,animate:false});
+      if(visible.length){overviewBounds=stage===-1?bounds:L.latLngBounds(visible);fitOverview();}
     }
     window.addEventListener('message',event=>{
       if(event.origin!==location.origin||event.source!==parent||event.data?.source!=='barev-parent')return;
